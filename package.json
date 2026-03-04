@@ -1,0 +1,19 @@
+{
+  "name": "mcp-es-logs",
+  "version": "1.0.0",
+  "description": "MCP server for downloading Elasticsearch logs from Elastic Cloud Admin API",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.9.0"
+  }
+}
