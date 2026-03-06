@@ -4,10 +4,45 @@ import { z } from "zod";
 import * as fs from "fs";
 import * as path from "path";
 import * as https from "https";
-import * as http from "http";
+import { IncomingHttpHeaders } from "http";
 import { execSync } from "child_process";
 
 const ADMIN_BASE = "https://admin.found.no/api/v1";
+
+interface HttpResponse {
+  status: number;
+  headers: IncomingHttpHeaders;
+  body: Buffer;
+}
+
+interface PlanInfoLog {
+  failure_type?: string;
+  message?: string;
+  details?: Record<string, string>;
+}
+
+interface PlanAttemptLog {
+  step_id: string;
+  status: string;
+  info_log?: PlanInfoLog[];
+}
+
+interface PlanHistory {
+  plan_attempt_id: string;
+  attempt_start_time: string;
+  attempt_end_time: string;
+  plan_attempt_log?: PlanAttemptLog[];
+}
+
+interface FailedPlan {
+  attempt: string;
+  started: string;
+  ended: string;
+  failed_step: string | null;
+  failure_type: string | null;
+  message: string | null;
+  details: Record<string, string> | null;
+}
 
 function getApiKey(): string {
   const key = process.env.EC_API_KEY;
@@ -15,7 +50,7 @@ function getApiKey(): string {
   return key;
 }
 
-function httpsGet(url: string, apiKey: string): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
+function httpsGet(url: string, apiKey: string): Promise<HttpResponse> {
   return new Promise((resolve, reject) => {
     const req = https.get(url, { headers: { Authorization: `ApiKey ${apiKey}` } }, (res) => {
       const chunks: Buffer[] = [];
@@ -166,35 +201,30 @@ server.tool(
     if (status !== 200) throw new Error(`Admin API returned ${status}: ${body.toString()}`);
 
     const data = JSON.parse(body.toString());
-    const history: any[] = data?.resources?.elasticsearch?.[0]?.info?.plan_info?.history ?? [];
+    const history: PlanHistory[] = data?.resources?.elasticsearch?.[0]?.info?.plan_info?.history ?? [];
 
-    const failedPlans = history
-      .filter((h: any) => h?.plan_attempt_log?.at(-1)?.status === "error")
-      .map((h: any) => {
-        const logs: any[] = h.plan_attempt_log ?? [];
-        const failedStep = logs.find(
-          (l: any) => (l.status === "error" || l.status === "pending") && l.info_log?.at(-1)?.failure_type
-        );
-        const anyWithFailure = logs.find((l: any) => l.info_log?.at(-1)?.failure_type);
+    const seen = new Set<string>();
+    const unique: FailedPlan[] = history
+      .filter((h) => h?.plan_attempt_log?.at(-1)?.status === "error")
+      .filter((h) => {
+        if (seen.has(h.plan_attempt_id)) return false;
+        seen.add(h.plan_attempt_id);
+        return true;
+      })
+      .map((h) => {
+        const logs: PlanAttemptLog[] = h.plan_attempt_log ?? [];
+        const failedLog = logs.find((l) => l.info_log?.at(-1)?.failure_type);
+        const lastInfoLog = failedLog?.info_log?.at(-1);
         return {
           attempt: h.plan_attempt_id,
           started: h.attempt_start_time,
           ended: h.attempt_end_time,
-          healthy: h.healthy,
-          failed_step: failedStep?.step_id ?? null,
-          failure_type: anyWithFailure?.info_log?.at(-1)?.failure_type ?? null,
-          message: anyWithFailure?.info_log?.at(-1)?.message ?? null,
-          details: anyWithFailure?.info_log?.at(-1)?.details ?? null,
+          failed_step: failedLog?.step_id ?? null,
+          failure_type: lastInfoLog?.failure_type ?? null,
+          message: lastInfoLog?.message ?? null,
+          details: lastInfoLog?.details ?? null,
         };
       });
-
-    // Deduplicate by attempt ID
-    const seen = new Set<string>();
-    const unique = failedPlans.filter((p: any) => {
-      if (seen.has(p.attempt)) return false;
-      seen.add(p.attempt);
-      return true;
-    });
 
     if (unique.length === 0) {
       return { content: [{ type: "text", text: `No failed plans found for deployment ${deployment_id}` }] };
@@ -210,7 +240,7 @@ server.tool(
       lines.push(`   Message:      ${p.message}`);
       if (p.details) {
         lines.push(`   Details:`);
-        for (const [node, msg] of Object.entries(p.details as Record<string, string>)) {
+        for (const [node, msg] of Object.entries(p.details)) {
           lines.push(`     ${node}: ${msg}`);
         }
       }
