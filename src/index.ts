@@ -45,8 +45,8 @@ interface FailedPlan {
 }
 
 function getApiKey(): string {
-  const key = process.env.EC_API_KEY;
-  if (!key) throw new Error("EC_API_KEY environment variable is not set");
+  const key = process.env.EC_API_KEY ?? process.env.ELASTIC_ESS_KEY;
+  if (!key) throw new Error("Neither EC_API_KEY nor ELASTIC_ESS_KEY is set");
   return key;
 }
 
